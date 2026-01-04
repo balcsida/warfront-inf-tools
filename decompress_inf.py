@@ -357,14 +357,17 @@ class BinaryInfParser:
 
 
 class SimpleInfParser:
-    """Parser for 'simple' binary INF files (without _RefID, like defaultmusics.inf).
+    """Parser for 'simple' binary INF files (without _RefID, like terrainmaps.inf).
 
     Simple format structure:
     - Header: sto(4) + reserved(4) + section_count(4) + reserved(4)
-    - Section 0: prop_count(4) + child_count(4) + properties (name from strings[0])
-    - Sections 1+: name_idx(4) + prop_count(4) + child_count(4) + properties
+    - Section 0: prop_count(4) + child_count(4) + properties + child_sections (name from strings[0])
+    - Sections 1+: name_idx(4) + prop_count(4) + child_count(4) + properties + child_sections
     - Property: name_idx(4) + val_count(1) + type(1) + values
     - Value: string_idx(4) for type 0, double(8) for type 1
+
+    Child sections are nested recursively - child_count indicates how many sections follow
+    that belong inside the current section.
     """
 
     def __init__(self, data):
@@ -440,19 +443,39 @@ class SimpleInfParser:
             else:
                 return str(val)
 
-    def format_section(self, name, props):
-        """Format a section as text."""
-        lines = [f'[{name}]', '{']
+    def parse_section(self, name, indent=0):
+        """Parse a section with its properties and child sections recursively."""
+        lines = []
+        ind = '\t' * indent
+
+        prop_count = self.u32()
+        child_count = self.u32()
+
+        # Format section header
+        lines.append(f'{ind}[{name}]')
+        lines.append(f'{ind}{{')
+
+        # Parse and format properties
+        props = self.parse_properties(prop_count)
         for pname, values in props:
             if len(values) == 1:
-                # Single value - simple format (no quotes around simple strings)
                 val = values[0]
-                lines.append(f'\t{pname}={self.format_value(val)}')
+                lines.append(f'{ind}\t{pname}={self.format_value(val)}')
             else:
-                # Multiple values - comma-separated (no spaces after commas)
                 formatted = ','.join(self.format_value(v) for v in values)
-                lines.append(f'\t{pname}={formatted}')
-        lines.append('}')
+                lines.append(f'{ind}\t{pname}={formatted}')
+
+        # Parse child sections recursively
+        for _ in range(child_count):
+            name_idx = self.u32()
+            child_name = self.get_str(name_idx)
+            # Add blank line before child section if we had properties
+            if props:
+                lines.append('')
+            child_lines = self.parse_section(child_name, indent + 1)
+            lines.extend(child_lines)
+
+        lines.append(f'{ind}}}')
         return lines
 
     def parse(self):
@@ -464,20 +487,18 @@ class SimpleInfParser:
 
         all_lines = []
 
-        # Section 0: name is strings[0], no name_idx field
-        prop_count = self.u32()
-        child_count = self.u32()  # Usually 0 for simple format
-        props = self.parse_properties(prop_count)
-        all_lines.extend(self.format_section(self.get_str(0), props))
+        # Section 0: name is strings[0], no name_idx field before prop_count
+        name = self.get_str(0)
+        section_lines = self.parse_section(name, 0)
+        all_lines.extend(section_lines)
 
-        # Remaining sections: have name_idx field
+        # Remaining top-level sections: have name_idx field
         for _ in range(1, section_count):
             name_idx = self.u32()
-            prop_count = self.u32()
-            child_count = self.u32()  # Usually 0
-            props = self.parse_properties(prop_count)
-            all_lines.append('')  # Blank line between sections
-            all_lines.extend(self.format_section(self.get_str(name_idx), props))
+            name = self.get_str(name_idx)
+            all_lines.append('')  # Blank line between top-level sections
+            section_lines = self.parse_section(name, 0)
+            all_lines.extend(section_lines)
 
         return '\r\n'.join(all_lines) + '\r\n'
 
