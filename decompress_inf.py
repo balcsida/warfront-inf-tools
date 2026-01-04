@@ -82,7 +82,13 @@ class BinaryInfParser:
         self.pos = 0
         self.strings = []
         self.wstrings = []
+        self.refid_counter = 0  # Counter for generating _RefID values
         self._load_string_tables()
+
+    def next_refid(self):
+        """Get next _RefID value and increment counter."""
+        self.refid_counter += 1
+        return self.refid_counter
 
     def _load_string_tables(self):
         """Load string and wide string tables from the end of the file."""
@@ -153,8 +159,33 @@ class BinaryInfParser:
             return str(int(v))
         return str(v)
 
+    def needs_quotes(self, s):
+        """Check if a string value needs quotes in the output."""
+        # Empty strings always need quotes
+        if not s:
+            return True
+        # Strings with spaces, special chars, or paths need quotes
+        if ' ' in s or '/' in s or '\\' in s or '"' in s or '=' in s:
+            return True
+        # Strings that look like file paths need quotes
+        if '.' in s and '/' not in s and '\\' not in s:
+            # Could be a file extension like "times_8_normal" - check if it has path-like chars
+            pass
+        return True  # Quote all strings for safety
+
+    def fmt_string(self, s):
+        """Format a string value with quotes if needed."""
+        if self.needs_quotes(s):
+            # Escape any quotes in the string
+            s = s.replace('"', '\\"')
+            return f'"{s}"'
+        return s
+
     def parse_property(self):
-        """Parse a single property and return as text line."""
+        """Parse a single property and return as text line.
+
+        Returns None if the property should be skipped (e.g., _RefID which we generate ourselves).
+        """
         name_idx = self.u32()
         prop_name = self.get_str(name_idx)
         count = self.u8()
@@ -164,7 +195,7 @@ class BinaryInfParser:
             ptype = self.u8()
             if ptype == 0:  # String index
                 idx = self.u32()
-                vals.append(self.get_str(idx))
+                vals.append(self.fmt_string(self.get_str(idx)))
             elif ptype == 1:  # Double
                 vals.append(self.fmt_double(self.f64()))
             elif ptype == 2:  # Wide string index
@@ -176,6 +207,10 @@ class BinaryInfParser:
                 vals.append(f'<blob:{blob_len}>')
             else:
                 raise ValueError(f'Unknown property type {ptype} at 0x{self.pos-1:X}')
+
+        # Skip _RefID properties - we generate these ourselves with proper sequential numbering
+        if prop_name == '_RefID':
+            return None
 
         return f'{prop_name} = {", ".join(vals)}'
 
@@ -191,10 +226,18 @@ class BinaryInfParser:
         lines.append(f'{ind}[{class_name}]')
         lines.append(f'{ind}{{')
 
+        # Add _RefID as first property
+        lines.append(f'{ind}\t_RefID = {self.next_refid()}')
+
         # Parse properties
         for _ in range(prop_count):
             prop_line = self.parse_property()
-            lines.append(f'{ind}\t{prop_line}')
+            if prop_line is not None:  # Skip None (filtered properties like _RefID)
+                lines.append(f'{ind}\t{prop_line}')
+
+        # Add blank line after properties, before child sections
+        if prop_count > 0 or child_count > 0:
+            lines.append('')
 
         # Parse child sections
         for _ in range(child_count):
@@ -217,10 +260,18 @@ class BinaryInfParser:
         lines.append(f'{ind}[{class_name}]')
         lines.append(f'{ind}{{')
 
+        # Add _RefID as first property
+        lines.append(f'{ind}\t_RefID = {self.next_refid()}')
+
         # Parse properties
         for _ in range(prop_count):
             prop_line = self.parse_property()
-            lines.append(f'{ind}\t{prop_line}')
+            if prop_line is not None:  # Skip None (filtered properties like _RefID)
+                lines.append(f'{ind}\t{prop_line}')
+
+        # Add blank line after properties, before child sections
+        if prop_count > 0 or child_count > 0:
+            lines.append('')
 
         # Parse child sections
         for _ in range(child_count):
@@ -249,33 +300,39 @@ class BinaryInfParser:
         if second_field == 0:
             # Container section with child objects
             obj_count = self.u32()
-            lines.append(f'{ind}{section_name}')
+            lines.append(f'{ind}[{section_name}]')
+            lines.append(f'{ind}{{')
+
+            # Add blank line at start of section
+            lines.append('')
 
             for _ in range(obj_count):
-                obj_lines = self.parse_child_object(indent)
+                obj_lines = self.parse_child_object(indent + 1)
                 lines.extend(obj_lines)
+
+            lines.append(f'{ind}}}')
         else:
-            # Inline object section - class name is embedded in section_name after " : "
+            # Inline object section - the section name includes class info
             # Format: section_name + prop_count + child_count + props + sections
+            # Example: "ToolTip : cPrismToolTip" becomes [ToolTip : cPrismToolTip]
             prop_count = second_field
             child_count = self.u32()
 
-            # Extract class name from section name (e.g., "ToolTip : cPrismToolTip" -> "cPrismToolTip")
-            if ' : ' in section_name:
-                section_part, class_part = section_name.split(' : ', 1)
-                class_name = f': {class_part}'
-            else:
-                section_part = section_name
-                class_name = section_name
-
-            lines.append(f'{ind}{section_part}')
-            lines.append(f'{ind}[{class_name}]')
+            lines.append(f'{ind}[{section_name}]')
             lines.append(f'{ind}{{')
+
+            # Add blank line at start of section
+            lines.append('')
 
             # Parse properties
             for _ in range(prop_count):
                 prop_line = self.parse_property()
-                lines.append(f'{ind}\t{prop_line}')
+                if prop_line is not None:  # Skip None (filtered properties like _RefID)
+                    lines.append(f'{ind}\t{prop_line}')
+
+            # Add blank line after properties if there are child sections
+            if prop_count > 0 and child_count > 0:
+                lines.append('')
 
             # Parse child sections
             for _ in range(child_count):
@@ -293,14 +350,189 @@ class BinaryInfParser:
 
         try:
             lines = self.parse_root_object(0)
-            return '\n'.join(lines)
+            # Add leading blank line and trailing newline to match original format
+            return '\r\n' + '\r\n'.join(lines) + '\r\n'
         except Exception as e:
             raise ValueError(f'Parse error at 0x{self.pos:X}: {e}')
 
 
+class SimpleInfParser:
+    """Parser for 'simple' binary INF files (without _RefID, like defaultmusics.inf).
+
+    Simple format structure:
+    - Header: sto(4) + reserved(4) + section_count(4) + reserved(4)
+    - Section 0: prop_count(4) + child_count(4) + properties (name from strings[0])
+    - Sections 1+: name_idx(4) + prop_count(4) + child_count(4) + properties
+    - Property: name_idx(4) + val_count(1) + type(1) + values
+    - Value: string_idx(4) for type 0, double(8) for type 1
+    """
+
+    def __init__(self, data):
+        self.data = data
+        self.pos = 0
+        self.strings = []
+        self._load_strings()
+
+    def _load_strings(self):
+        """Load string table."""
+        sto = struct.unpack('<I', self.data[0:4])[0]
+        pos = sto
+        str_count = struct.unpack('<I', self.data[pos:pos+4])[0]
+        pos += 4
+        for _ in range(str_count):
+            end = self.data.find(b'\x00', pos)
+            if end == -1:
+                break
+            self.strings.append(self.data[pos:end].decode('utf-8', errors='replace'))
+            pos = end + 1
+
+    def u32(self):
+        val = struct.unpack('<I', self.data[self.pos:self.pos+4])[0]
+        self.pos += 4
+        return val
+
+    def u8(self):
+        val = self.data[self.pos]
+        self.pos += 1
+        return val
+
+    def get_str(self, idx):
+        if 0 <= idx < len(self.strings):
+            return self.strings[idx]
+        return f"<invalid:{idx}>"
+
+    def parse_properties(self, count):
+        """Parse properties and return list of (name, values) tuples."""
+        props = []
+        for _ in range(count):
+            name_idx = self.u32()
+            val_count = self.u8()
+            vtype = self.u8()
+
+            values = []
+            for v in range(val_count):
+                # After the first value, there's a type marker before each value
+                if v > 0:
+                    vtype = self.u8()
+
+                if vtype == 0:  # string
+                    vidx = self.u32()
+                    values.append(self.get_str(vidx))
+                elif vtype == 1:  # double
+                    val = struct.unpack('<d', self.data[self.pos:self.pos+8])[0]
+                    self.pos += 8
+                    values.append(val)
+
+            props.append((self.get_str(name_idx), values))
+        return props
+
+    def format_value(self, val):
+        """Format a single value."""
+        if isinstance(val, str):
+            # In simple format, only quote strings that contain spaces or special chars
+            if ' ' in val or '/' in val or '\\' in val or ',' in val:
+                return f'"{val}"'
+            return val
+        else:
+            # Format numbers without trailing zeros
+            if val == int(val):
+                return str(int(val))
+            else:
+                return str(val)
+
+    def format_section(self, name, props):
+        """Format a section as text."""
+        lines = [f'[{name}]', '{']
+        for pname, values in props:
+            if len(values) == 1:
+                # Single value - simple format (no quotes around simple strings)
+                val = values[0]
+                lines.append(f'\t{pname}={self.format_value(val)}')
+            else:
+                # Multiple values - comma-separated (no spaces after commas)
+                formatted = ','.join(self.format_value(v) for v in values)
+                lines.append(f'\t{pname}={formatted}')
+        lines.append('}')
+        return lines
+
+    def parse(self):
+        """Parse the entire file and return text representation."""
+        # Header
+        self.pos = 8
+        section_count = self.u32()
+        self.pos = 16  # Skip to data section
+
+        all_lines = []
+
+        # Section 0: name is strings[0], no name_idx field
+        prop_count = self.u32()
+        child_count = self.u32()  # Usually 0 for simple format
+        props = self.parse_properties(prop_count)
+        all_lines.extend(self.format_section(self.get_str(0), props))
+
+        # Remaining sections: have name_idx field
+        for _ in range(1, section_count):
+            name_idx = self.u32()
+            prop_count = self.u32()
+            child_count = self.u32()  # Usually 0
+            props = self.parse_properties(prop_count)
+            all_lines.append('')  # Blank line between sections
+            all_lines.extend(self.format_section(self.get_str(name_idx), props))
+
+        return '\r\n'.join(all_lines) + '\r\n'
+
+
+def is_simple_format(data):
+    """Check if data is 'simple' binary format (vs 'object' format with _RefID).
+
+    Simple format: multiple top-level sections, no nested objects
+    - [0x08] = section_count (> 1)
+    - [0x14] = 0 (no child objects)
+
+    Object format: single root object with nested children
+    - [0x08] = 1 (single root)
+    - [0x14] = child_count (usually > 0)
+    - First string often contains ' : ' (class name)
+    """
+    if len(data) < 24:
+        return False
+    sto = struct.unpack('<I', data[0:4])[0]
+    if sto < 16 or sto >= len(data):
+        return False
+
+    # Check structural indicators
+    val_08 = struct.unpack('<I', data[8:12])[0]   # section_count or 1
+    val_14 = struct.unpack('<I', data[20:24])[0]  # child_count at offset 0x14
+
+    # Simple format has section_count > 1 at offset 8, and child_count = 0 at offset 0x14
+    # Object format has 1 at offset 8 and often child_count > 0
+    if val_08 > 1 and val_14 == 0:
+        return True
+
+    # Additional check: object format first string often contains ' : '
+    str_count = struct.unpack('<I', data[sto:sto+4])[0]
+    if str_count == 0:
+        return False
+    pos = sto + 4
+    end = data.find(b'\x00', pos)
+    if end == -1:
+        return False
+    first_str = data[pos:end].decode('utf-8', errors='replace')
+
+    # If first string contains ' : ', it's object format
+    if ' : ' in first_str:
+        return False
+
+    # Default to simple if section_count > 1
+    return val_08 > 1
+
+
 def binary_to_text(data):
     """Convert decompressed binary INF to text format."""
-    parser = BinaryInfParser(data)
+    if is_simple_format(data):
+        parser = SimpleInfParser(data)
+    else:
+        parser = BinaryInfParser(data)
     return parser.parse()
 
 def is_text_inf(data):
@@ -442,8 +674,9 @@ def decompress_inf(input_path, output_path, verbose=False, to_text=False):
         try:
             text_content = binary_to_text(decompressed)
             if output_path:
-                with open(output_path, 'w', encoding='utf-8') as f:
-                    f.write(text_content)
+                # Use binary mode to preserve exact CRLF line endings
+                with open(output_path, 'wb') as f:
+                    f.write(text_content.encode('utf-8'))
             print(f"  Converted: {os.path.basename(input_path)} -> text ({len(text_content)} chars)")
             return 'converted'
         except Exception as e:
@@ -470,14 +703,17 @@ def decompress_inf(input_path, output_path, verbose=False, to_text=False):
     return True
 
 def process_directory(input_dir, output_dir, verbose=False, in_place=False, to_text=False):
-    """Process all INF files in a directory."""
+    """Process all INF and BASE files in a directory."""
     if in_place:
         output_dir = input_dir
 
     os.makedirs(output_dir, exist_ok=True)
 
+    # Find both .inf and .base files
     inf_files = glob.glob(os.path.join(input_dir, "**/*.inf"), recursive=True)
-    print(f"Found {len(inf_files)} .inf files")
+    base_files = glob.glob(os.path.join(input_dir, "**/*.base"), recursive=True)
+    all_files = inf_files + base_files
+    print(f"Found {len(inf_files)} .inf files and {len(base_files)} .base files")
     print(f"Output: {output_dir}")
     if to_text:
         print(f"Mode: Convert to text")
@@ -485,7 +721,7 @@ def process_directory(input_dir, output_dir, verbose=False, in_place=False, to_t
 
     stats = {'decompressed': 0, 'converted': 0, 'text': 0, 'binary': 0, 'error': 0, 'skipped': 0}
 
-    for inf_file in inf_files:
+    for inf_file in all_files:
         rel_path = os.path.relpath(inf_file, input_dir)
         output_path = os.path.join(output_dir, rel_path)
         os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
