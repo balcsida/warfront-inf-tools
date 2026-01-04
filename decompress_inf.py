@@ -503,6 +503,232 @@ class SimpleInfParser:
         return '\r\n'.join(all_lines) + '\r\n'
 
 
+class TerrainTypeTableParser:
+    """Parser for terraintypetable.inf - hybrid format with u16 root header and u32 child objects.
+
+    This format is unique to terraintypetable.inf:
+    - Header: sto(4) + version(4) + reserved(8)
+    - Root header at 0x10: prop_count(u16) + sec_count(u16)
+    - Root property: name_idx(u16) + sec_name_idx(u16) + value(u32)
+    - Section header: pad(u16) + child_count(u16) + pad(u16)
+    - Child objects: standard u32 format (class_idx + prop_count + child_count + props + sections)
+    """
+
+    def __init__(self, data):
+        self.data = data
+        self.pos = 0
+        self.strings = []
+        self._load_strings()
+
+    def _load_strings(self):
+        """Load string table."""
+        sto = struct.unpack('<I', self.data[0:4])[0]
+        pos = sto
+        str_count = struct.unpack('<I', self.data[pos:pos+4])[0]
+        pos += 4
+        for _ in range(str_count):
+            end = self.data.find(b'\x00', pos)
+            if end == -1:
+                break
+            self.strings.append(self.data[pos:end].decode('utf-8', errors='replace'))
+            pos = end + 1
+
+    def u8(self):
+        val = self.data[self.pos]
+        self.pos += 1
+        return val
+
+    def u16(self):
+        val = struct.unpack('<H', self.data[self.pos:self.pos+2])[0]
+        self.pos += 2
+        return val
+
+    def u32(self):
+        val = struct.unpack('<I', self.data[self.pos:self.pos+4])[0]
+        self.pos += 4
+        return val
+
+    def f64(self):
+        val = struct.unpack('<d', self.data[self.pos:self.pos+8])[0]
+        self.pos += 8
+        return val
+
+    def get_str(self, idx):
+        if 0 <= idx < len(self.strings):
+            return self.strings[idx]
+        return f'<{idx}>'
+
+    def fmt_double(self, v):
+        """Format double value."""
+        if v == int(v) and abs(v) < 1e15:
+            return str(int(v))
+        return str(v)
+
+    def fmt_string(self, s):
+        """Format string value with quotes."""
+        s = s.replace('"', '\\"')
+        return f'"{s}"'
+
+    def parse_property(self):
+        """Parse a property in standard u32 format."""
+        name_idx = self.u32()
+        count = self.u8()
+        first_type = self.u8()
+
+        vals = []
+        for i in range(count):
+            if i > 0:
+                vtype = self.u8()
+            else:
+                vtype = first_type
+
+            if vtype == 0:  # String
+                idx = self.u32()
+                vals.append(self.fmt_string(self.get_str(idx)))
+            elif vtype == 1:  # Double
+                vals.append(self.fmt_double(self.f64()))
+            elif vtype == 2:  # Wide string (not expected here)
+                idx = self.u32()
+                vals.append(f'L"{self.get_str(idx)}"')
+            else:
+                vals.append(f'<type{vtype}>')
+
+        return self.get_str(name_idx), vals
+
+    def parse_child_object(self, indent=1):
+        """Parse a child object in standard u32 format."""
+        lines = []
+        ind = '\t' * indent
+
+        class_idx = self.u32()
+        prop_count = self.u32()
+        sec_count = self.u32()
+
+        class_name = self.get_str(class_idx)
+        lines.append(f'{ind}[{class_name}]')
+        lines.append(f'{ind}{{')
+
+        # Properties
+        for _ in range(prop_count):
+            pname, vals = self.parse_property()
+            vals_str = ', '.join(vals)
+            lines.append(f'{ind}\t{pname} = {vals_str}')
+
+        # Blank line before sections if we had properties
+        if prop_count > 0 and sec_count > 0:
+            lines.append('')
+
+        # Child sections (container sections)
+        for _ in range(sec_count):
+            sec_name_idx = self.u32()
+            sec_zero = self.u32()
+            sec_children = self.u32()
+
+            sec_name = self.get_str(sec_name_idx)
+            lines.append(f'{ind}\t[{sec_name}]')
+            lines.append(f'{ind}\t{{')
+
+            # Container sections have child objects
+            for _ in range(sec_children):
+                child_lines = self.parse_child_object(indent + 2)
+                lines.extend(child_lines)
+
+            lines.append(f'{ind}\t}}')
+
+        lines.append(f'{ind}}}')
+        return lines
+
+    def parse(self):
+        """Parse the entire file and return text representation."""
+        self.pos = 0x10
+
+        # Root header (u16 format)
+        root_props = self.u16()
+        root_secs = self.u16()
+
+        lines = []
+
+        # Root property (u16 format): name_idx + sec_name_idx
+        prop_name_idx = self.u16()
+        sec_name_idx = self.u16()
+
+        # Root property value area (u32)
+        # In terraintypetable format, this is 0 which means empty string (strings[1])
+        # The format stores 0 but semantically means "no value" or empty
+        prop_val = self.u32()
+
+        # Output root property
+        prop_name = self.get_str(prop_name_idx)
+        # Value 0 in this format means empty string, not strings[0]
+        # This is a quirk of the terraintypetable format
+        if prop_val == 0:
+            prop_val_str = '""'
+        else:
+            prop_val_str = self.fmt_string(self.get_str(prop_val))
+        lines.append(f'{prop_name} = {prop_val_str}')
+        lines.append('')
+
+        # Section header
+        sec_pad = self.u16()
+        child_count = self.u16()
+        skip_pad = self.u16()
+
+        # Output section
+        sec_name = self.get_str(sec_name_idx)
+        lines.append(f'[{sec_name}]')
+        lines.append('{')
+        lines.append('')
+
+        # Child objects (standard u32 format)
+        for _ in range(child_count):
+            child_lines = self.parse_child_object(1)
+            lines.extend(child_lines)
+
+        lines.append('}')
+        lines.append('')
+
+        return '\r\n'.join(lines)
+
+
+def is_terraintypetable_format(data):
+    """Check if data is the terraintypetable.inf hybrid format.
+
+    This format has:
+    - String table offset at 0x00
+    - Version/flags at 0x04 = 1
+    - Reserved at 0x08 = 1
+    - Reserved at 0x0C = 0
+    - First string is 'StringID'
+    """
+    if len(data) < 0x22:
+        return False
+
+    sto = struct.unpack('<I', data[0:4])[0]
+    if sto < 0x22 or sto >= len(data):
+        return False
+
+    # Check header pattern: 01 00 00 00 01 00 00 00 00 00 00 00 at 0x04
+    val_04 = struct.unpack('<I', data[4:8])[0]
+    val_08 = struct.unpack('<I', data[8:12])[0]
+    val_0c = struct.unpack('<I', data[12:16])[0]
+
+    if val_04 != 1 or val_08 != 1 or val_0c != 0:
+        return False
+
+    # Check first string is 'StringID'
+    str_count = struct.unpack('<I', data[sto:sto+4])[0]
+    if str_count < 3:
+        return False
+
+    pos = sto + 4
+    end = data.find(b'\x00', pos)
+    if end == -1:
+        return False
+    first_str = data[pos:end].decode('utf-8', errors='replace')
+
+    return first_str == 'StringID'
+
+
 def is_simple_format(data):
     """Check if data is 'simple' binary format (vs 'object' format with _RefID).
 
@@ -550,7 +776,9 @@ def is_simple_format(data):
 
 def binary_to_text(data):
     """Convert decompressed binary INF to text format."""
-    if is_simple_format(data):
+    if is_terraintypetable_format(data):
+        parser = TerrainTypeTableParser(data)
+    elif is_simple_format(data):
         parser = SimpleInfParser(data)
     else:
         parser = BinaryInfParser(data)
