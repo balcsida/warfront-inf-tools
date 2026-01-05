@@ -226,8 +226,9 @@ class BinaryInfParser:
         lines.append(f'{ind}[{class_name}]')
         lines.append(f'{ind}{{')
 
-        # Add _RefID as first property
-        lines.append(f'{ind}\t_RefID = {self.next_refid()}')
+        # Add _RefID as first property only for objects with class type (contains ' : ')
+        if ' : ' in class_name:
+            lines.append(f'{ind}\t_RefID = {self.next_refid()}')
 
         # Parse properties
         for _ in range(prop_count):
@@ -260,8 +261,9 @@ class BinaryInfParser:
         lines.append(f'{ind}[{class_name}]')
         lines.append(f'{ind}{{')
 
-        # Add _RefID as first property
-        lines.append(f'{ind}\t_RefID = {self.next_refid()}')
+        # Add _RefID as first property only for objects with class type (contains ' : ')
+        if ' : ' in class_name:
+            lines.append(f'{ind}\t_RefID = {self.next_refid()}')
 
         # Parse properties
         for _ in range(prop_count):
@@ -321,8 +323,9 @@ class BinaryInfParser:
             lines.append(f'{ind}[{section_name}]')
             lines.append(f'{ind}{{')
 
-            # Add blank line at start of section
-            lines.append('')
+            # Add _RefID as first property for inline objects with ' : ' in name
+            if ' : ' in section_name:
+                lines.append(f'{ind}\t_RefID = {self.next_refid()}')
 
             # Parse properties
             for _ in range(prop_count):
@@ -729,6 +732,50 @@ def is_terraintypetable_format(data):
     return first_str == 'StringID'
 
 
+def is_tdx_defs_format(data):
+    """Check if data is a TDX definitions file (like tdxdefs.inf).
+
+    TDX defs format has:
+    - Non-zero entry count at offset 0x04
+    - First string is typically 'UNDEFINED' or similar definition value
+    - Does not contain ' : ' class patterns
+    """
+    if len(data) < 24:
+        return False
+
+    sto = struct.unpack('<I', data[0:4])[0]
+    if sto < 16 or sto >= len(data):
+        return False
+
+    # Check for non-zero entry count at 0x04
+    entry_count = struct.unpack('<I', data[4:8])[0]
+    if entry_count == 0:
+        return False
+
+    # Read first string
+    str_count = struct.unpack('<I', data[sto:sto+4])[0]
+    if str_count == 0:
+        return False
+    pos = sto + 4
+    end = data.find(b'\x00', pos)
+    if end == -1:
+        return False
+    first_str = data[pos:end].decode('utf-8', errors='replace')
+
+    # TDX defs first string is typically 'UNDEFINED' or similar
+    # Object format first string contains ' : '
+    if ' : ' in first_str:
+        return False
+
+    # Check if first string looks like a definition value
+    # Common TDX def values: UNDEFINED, FFFFFFFF, NONE, TRUE, FALSE, etc.
+    tdx_indicators = ['UNDEFINED', 'FFFFFFFF', 'FFFFFFFE', 'NONE', 'TRUE', 'FALSE']
+    if first_str.upper() in tdx_indicators:
+        return True
+
+    return False
+
+
 def is_simple_format(data):
     """Check if data is 'simple' binary format (vs 'object' format with _RefID).
 
@@ -774,8 +821,47 @@ def is_simple_format(data):
     return val_08 > 1
 
 
-def binary_to_text(data):
-    """Convert decompressed binary INF to text format."""
+def is_version2_format(data):
+    """Check if data uses version 2 binary format.
+
+    Version 2 format has a different header structure:
+    - Extra data at offset 0x0C-0x0F (non-zero)
+    - Uses u16 for prop_count/child_count at offset 0x12/0x14
+    """
+    if len(data) < 24:
+        return False
+
+    # Version 2 has non-zero value at 0x0C-0x0F while v3 has zeros
+    val_0c = struct.unpack('<I', data[12:16])[0]
+    if val_0c == 0:
+        return False
+
+    # Additional check: in v2, bytes at 0x0E are non-zero (often 0x0A)
+    val_0e = struct.unpack('<H', data[14:16])[0]
+    return val_0e > 0
+
+
+def binary_to_text(data, compression_version=3):
+    """Convert decompressed binary INF to text format.
+
+    Args:
+        data: Decompressed binary data
+        compression_version: Version from compressed file magic (0-3)
+
+    Returns:
+        Text representation of the INF file
+
+    Raises:
+        ValueError: If format is not supported for text conversion
+    """
+    # TDX definition files have a special format that we don't convert
+    if is_tdx_defs_format(data):
+        raise ValueError("TDX definitions format not supported for text conversion")
+
+    # Version 2 compressed files have a different binary format
+    if compression_version == 2 or is_version2_format(data):
+        raise ValueError("Version 2 binary format not supported for text conversion")
+
     if is_terraintypetable_format(data):
         parser = TerrainTypeTableParser(data)
     elif is_simple_format(data):
@@ -788,7 +874,11 @@ def is_text_inf(data):
     """Check if data is a text INF file (not binary)."""
     # Binary INF starts with string table offset (small number) followed by nulls
     # Text INF is human-readable with sections like [ClassName] and properties
-    if len(data) < 20:
+    if len(data) < 4:
+        return False
+
+    # Check for compressed magic
+    if data[0:4] in MAGICS:
         return False
 
     # Check if it looks like binary INF structure
@@ -797,11 +887,7 @@ def is_text_inf(data):
     if 16 <= sto < len(data) and data[4:8] == b'\x00\x00\x00\x00':
         return False  # Likely binary INF
 
-    # Check for compressed magic
-    if data[0:4] in MAGICS:
-        return False
-
-    # Try to decode as text and look for INI-like structure
+    # Try to decode as text
     try:
         text = data[:500].decode('utf-8', errors='strict')
         # Text INF should have section markers and be mostly printable
@@ -810,6 +896,10 @@ def is_text_inf(data):
         # Or start with comment/section
         stripped = text.strip()
         if stripped.startswith('[') or stripped.startswith(';') or stripped.startswith('#'):
+            return True
+        # Plain text file (like IntroDesc.inf which just contains a path)
+        # Check if all characters are printable ASCII or common whitespace
+        if all(c.isprintable() or c in '\r\n\t' for c in text):
             return True
     except:
         pass
@@ -921,13 +1011,21 @@ def decompress_inf(input_path, output_path, verbose=False, to_text=False):
     # Convert to text if requested
     if to_text and decompressed:
         try:
-            text_content = binary_to_text(decompressed)
+            text_content = binary_to_text(decompressed, version if version is not None else 3)
             if output_path:
                 # Use binary mode to preserve exact CRLF line endings
                 with open(output_path, 'wb') as f:
                     f.write(text_content.encode('utf-8'))
             print(f"  Converted: {os.path.basename(input_path)} -> text ({len(text_content)} chars)")
             return 'converted'
+        except ValueError as e:
+            # Format not supported for text conversion (e.g., TDX defs)
+            if verbose:
+                print(f"  Skipping {input_path} - {e}")
+            if output_path:
+                with open(output_path, 'wb') as f:
+                    f.write(decompressed)
+            return 'binary'
         except Exception as e:
             print(f"  Error converting {input_path} to text: {e}")
             # Fall back to writing binary
