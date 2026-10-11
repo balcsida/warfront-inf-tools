@@ -4,12 +4,14 @@ Tools for the binary INF configuration files used by **WarFront: Turning Point**
 
 ## Overview
 
-WarFront stores game configuration, UI layouts, unit definitions (`.base`) and player profiles in a compressed binary INF format. This repository provides a single tool, `decompress_inf.py`, that:
+WarFront stores game configuration, UI layouts, unit definitions (`.base`) and player profiles in a compressed binary INF format. This repository provides `decompress_inf.py`, which:
 
 - **Converts** binary INF files to the game's editable text format
 - **Compiles** text INF files back to binary (a replacement for Digital Reality's internal `bc.exe`)
 - **Decompresses** INF files without converting them
 - **Analyzes** INF file structure
+
+It also provides `widescreen.py`, which builds a [widescreen interface patch](#widescreen-patch) on top of it.
 
 Converting binary → text → binary reproduces every binary INF shipped with the retail game and the demos **byte for byte**, compressed stream included.
 
@@ -99,6 +101,42 @@ The retail game has been played with every INF and BASE file in `Inf` (1,093 fil
 `_RefID` is an ordinary property. Digital Reality's text sources give many objects a `_RefID`, but their compiler stripped most of them: of the 1,094 retail binaries, only 55 still contain any. The tool writes exactly what the binary contains, and the game runs fine without the missing IDs. The in-game test above includes `game.inf`, which has none, and the SP demo also ships 59 text files without any.
 
 The retail game doesn't need `--add-refids`. It numbers top-level `Name : cClass` objects plus every `[: cClass]` object in a container, starting at 1. This is the scheme earlier versions of this tool intended. Because of a parser bug, those versions also put IDs on some other nodes and missed some objects, and it was that output that was tested in-game. Files that already contain `_RefID`s are left untouched. Note that the developers' own numbering cannot be reproduced exactly: which classes get an ID depends on engine metadata not stored in the files.
+
+## Widescreen Patch
+
+The game renders at any resolution, but draws its 2D interface in a virtual 1024x768 space stretched to the screen. `widescreen.py` generates a patch that keeps the interface in proportion:
+
+- menus and dialogs are centred at 4:3
+- the in-game HUD is anchored to the screen edges: minimap in the bottom-left corner, unit info in the bottom-right corner, command panel and top bar centred
+- the top bar, the menu header and footer, dimming layers and the first-person scope overlay are widened to the full screen
+
+The bottom HUD is a single image per faction, which the patch cuts into three pieces. Full-width decorations are widened by repeating plain parts of the original art. All images are built from the game's own files, so the patch contains no game art. The executable is not modified.
+
+```bash
+# Reads the resolution from Local Settings.setting, or pass -r 2560x1080
+python3 widescreen.py "C:/Games/War Front" -o widescreen_patch
+
+# If the game's Inf folder is already patched, point at the originals
+python3 widescreen.py "C:/Games/War Front" --inf "C:/Games/War Front/Inf_backup" -o widescreen_patch
+```
+
+To install, back up `Inf`, copy the output folder's contents over the game folder, and set the virtual width the tool prints in `Local Settings.setting`:
+
+```
+stub\screensize\virtualsizex                       = num 1820
+stub\screensize\virtualsizey                       = num 768
+```
+
+`virtualsizex` is `768 * width / height` (1365 for 16:9, 1229 for 16:10, 1820 for 2560x1080). The patch is built for one virtual width; rebuild it from the original files after changing the aspect ratio. `--text` writes text INF files instead of binary.
+
+How the layout is rewritten (Prism UI rules found in the `Inf/2Prism` screens):
+
+- A control's `c2DArea` is in screen coordinates when the control is top-level or has `Position = 1`, and relative to its parent when it has `Position = 0`
+- A control's origin is its first area; a control without areas has its parent's origin. Primitive positions are relative to the origin
+- Skin classes (`GERMAN`, `ALLIES`, `SOVIET`) override areas (`cPrismControlSkin`) and primitive geometry (`cPrism*Skin`, `TargetID = "control\primitive"`)
+- Tooltips with `PosAbsolute = 1` have a screen-space `PosOffset`
+
+The patch shifts only screen-space coordinates, so everything nested moves with its parent. Loading screens and the medal screens are painted artwork and stay 4:3.
 
 ---
 

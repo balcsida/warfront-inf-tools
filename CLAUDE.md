@@ -15,9 +15,12 @@ python decompress_inf.py -t -f input.inf output.inf  # single file
 python decompress_inf.py -d Inf Inf_decompressed     # decompress only
 python decompress_inf.py -a file.inf                 # show structure
 
+python widescreen.py GAME_DIR --inf GAME_DIR/Inf_backup -o OUT   # widescreen patch
+
 python -m unittest discover -s tests                  # unit tests
 WARFRONT_DIR=/mnt/c/Users/balcs/Documents/warfronts/retail_hun \
-  python -m unittest discover -s tests                # + byte-exact round trip of a game install
+WARFRONT_INF_DIR=/mnt/c/Users/balcs/Documents/warfronts/retail_hun/Inf_backup \
+  python -m unittest discover -s tests                # + round trip and patch build on a game install
 ```
 
 No external dependencies beyond Python 3.6+.
@@ -32,6 +35,8 @@ Everything is one tree model (`Node`: name, ordered `(name, values)` props, chil
 - `detect_format`: 'compressed', 'binary' (decompressed), 'text' or None, decided by content
 
 Binary layout: `sto, root_prop_count, root_child_count`, then root props and child nodes. Every section and object is the same node record (`name_idx, prop_count, child_count, props, children`). There are no separate "simple", "object" or "terraintypetable" formats. Version 3 (`AA A5 FF FF`) uses u32 string indices; version 2 (`AB A5 FF FF`) uses u16. The string table is numbered in first-use order during a depth-first walk, which is what makes the round trip byte-exact. The format spec lives in README.md.
+
+`widescreen.py` rewrites the Prism UI screens (`Inf/2Prism`) for a wider virtual width: it shifts only screen-space coordinates (see README "Widescreen Patch" for the Position/skin rules), cuts the bottom HUD image into three pieces and widens full-width decorations by remapping image columns (`WIDE_ART`). Images are uncompressed 32-bit TGA, handled with the stdlib `Tga` class. It must be run on original files (it refuses an already-patched `centralpanel.inf`).
 
 `_RefID` is a normal property and is written exactly as stored. `--add-refids` optionally adds sequential IDs to files that have none; the game doesn't need it.
 
