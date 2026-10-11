@@ -1,7 +1,9 @@
-# War Front: Turning Point: unlocking the built-in editor and debug tools
+# Editor unlock and debug tools
 
 Reverse-engineering notes for *War Front: Turning Point* (Digital Reality / 10TACLE, 2007),
-covering the **Singleplayer Demo 1.01** and the **Hungarian retail** release.
+covering the **Singleplayer Demo 1.01** and the **Hungarian retail** release. The tools are
+`warfront.py launch` and `warfront.py patch-demo` (code in `editor_unlock.py`); see
+[Usage](#usage).
 
 **TL;DR**
 
@@ -68,12 +70,13 @@ Replace the pushed string pointer `"game"` with the existing `"editor"` string:
 | Retail (HUN) | `0x7AE0A3` | `68 E4 1D BF 00` | `68 54 FD C1 00` | `0xC1FD54` |
 
 * **Demo:** the exe isn't encrypted, so a static patch works:
-  `python patch_spdemo.py "...\Run\WarFront.exe"` writes `WarFront_editor.exe` next to it.
+  `python warfront.py patch-demo "...\Run\WarFront.exe"` writes `WarFront_editor.exe` next to
+  it. The original exe isn't modified.
 * **Retail:** `WarFront.exe` is encrypted on disk (a protector stub in `.init` plus `hc.dll`
-  decrypts it at start-up), so a file patch isn't possible. `wf_launch.py` starts the game,
-  polls the patch site until the decrypted bytes appear (≈50–350 ms), and writes the new
-  pointer before the start-up code reaches it:
-  `python wf_launch.py "...\WarFront.exe" --editor`.
+  decrypts it at start-up), so a file patch isn't possible. `warfront.py launch --editor`
+  starts the game, polls the patch site until the decrypted bytes appear (≈50–350 ms), and
+  writes the new pointer before the start-up code reaches it:
+  `python warfront.py launch "...\WarFront.exe" --editor`. This works for the demo as well.
   The launcher recognises the build by the original bytes and refuses unknown builds.
 
 The image base is fixed at `0x400000` (no ASLR). The editor opens as a normal window titled
@@ -132,10 +135,26 @@ mov ecx,[gameApp]; mov esi,[ecx]; call [esi+0x94]   ; get  -> mov al,[ecx+0x10]
 About 29 game-logic sites read it. The ones examined bypass tech / production / research
 availability checks for the **local player in non-multiplayer games**. For example, an item
 counts as available when debug mode is on, the game isn't multiplayer, and the item belongs to
-the local player. The same flag can be set without the editor, e.g. by writing `1` there with
-Cheat Engine or x32dbg (`wf_launch.py --debug-mode` does this but is untested).
+the local player. The same flag can be set without the editor:
+`warfront.py launch --debug-mode` writes `1` there once the game app exists. Before writing, it
+checks that the object's vtable slots `+0x90`/`+0x94` are exactly the `[ecx+0x10]` setter and
+getter shown above, and refuses otherwise. Cheat Engine or x32dbg work too.
 
-## 3. Status
+## 3. Side effects: the editor writes game files
+
+The editor saves its state into the game folder:
+
+* `Local Settings.setting` gains `editor\…` and `propertyeditor\…` keys (window positions, last
+  level) and `editor\saveentitybasesonexit = 1`
+* `Inf\terraintypetable.inf` was re-saved as text (the retail file is compressed binary), and
+  `Inf\damagemultable.dat` was rewritten (same content)
+* `<level>_editorcfg.inf` files appear next to levels opened in the editor
+
+The game itself also rewrites `Inf\bases\baseinfos.inf` at start-up. Back up `Inf` before using
+the editor; with `editor\saveentitybasesonexit = 0` it should no longer save entity bases on
+exit (not verified).
+
+## 4. Status
 
 | Item | Status |
 |---|---|
@@ -143,27 +162,34 @@ Cheat Engine or x32dbg (`wf_launch.py --debug-mode` does this but is untested).
 | Editor opens (retail, in-memory patch) | ✅ tested; auto-loads the last level |
 | D_* debug hotkeys | ❌ compiled out in both builds |
 | DEBUG PROPS panel contents | from static analysis |
+| `launch --debug-mode` (retail) | ✅ flag written and read back on the verified game app object; game ran and exited normally |
 | Debug Mode effect in gameplay | from static analysis, not play-tested |
-| `wf_launch.py --debug-mode` | untested |
 | Demo editor assets | the demo lacks `CommonAssets\Editor\…` (atmosphere editor defaults), so some panels may warn |
 
 ## Usage
 
-Requires Windows and Python 3; no extra packages. Tested with 64-bit Python 3.14 against the
-32-bit game.
+Requires Python 3.6+ and no extra packages; `launch` needs Windows. Tested with 64-bit
+Python 3.14 against the 32-bit game.
 
 ```
 # Retail (or demo): start the editor via an in-memory patch
-python wf_launch.py "C:\Games\War Front\WarFront.exe" --editor
+python warfront.py launch "C:\Games\War Front\WarFront.exe" --editor
+
+# Normal game with Debug Mode on (combine with --editor if you like)
+python warfront.py launch "C:\Games\War Front\WarFront.exe" --debug-mode
 
 # SP demo only: write a patched copy, WarFront_editor.exe
-python patch_spdemo.py "C:\Games\War Front Demo\Run\WarFront.exe"
+python warfront.py patch-demo "C:\Games\War Front Demo\Run\WarFront.exe"
 ```
 
-## Files
+The launcher returns once the patches are applied; the game keeps running.
 
-* `wf_launch.py`: in-memory launcher (`--editor`, `--debug-mode`), works with both builds
-* `patch_spdemo.py`: static patch for the SP demo 1.01 exe
+## Code
+
+* `editor_unlock.py`: build table, patch-site detection, the in-memory launcher (`launch`) and
+  the demo file patch (`patch_demo_exe`)
+* `tests/test_editor_unlock.py`: unit tests against fake process memory and a synthetic PE;
+  set `WARFRONT_DEMO_EXE` to also check the real demo exe
 
 *Analysis done with Ghidra plus small Python helpers (PE parsing, command-table extraction,
 resource/menu dump, process memory dump). No game files are included here.*

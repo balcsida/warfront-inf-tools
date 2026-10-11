@@ -1,58 +1,67 @@
-# WarFront: Turning Point - INF File Tools
+# WarFront: Turning Point - Tools
 
-Tools for the binary INF configuration files used by **WarFront: Turning Point** (2007 RTS game by Digital Reality).
+Modding and reverse-engineering tools for **WarFront: Turning Point** (2007 RTS game by Digital Reality).
 
 ## Overview
 
-WarFront stores game configuration, UI layouts, unit definitions (`.base`) and player profiles in a compressed binary INF format. This repository provides `decompress_inf.py`, which:
+Everything is available through one command line, `warfront.py`:
+
+| Command | What it does |
+|---------|--------------|
+| `warfront.py inf` | Convert the game's binary INF configuration files to text and compile them back ([INF tools](#inf-tools)) |
+| `warfront.py widescreen` | Build a [widescreen interface patch](#widescreen-patch) from the game's own files |
+| `warfront.py launch` | Start the game with the hidden level editor and/or Debug Mode unlocked ([editor unlock](#editor-unlock-and-debug-mode), Windows) |
+| `warfront.py patch-demo` | Write an editor-mode copy of the SP demo exe ([editor unlock](#editor-unlock-and-debug-mode)) |
+
+The modules behind them (`decompress_inf.py`, `widescreen.py`, `editor_unlock.py`) can also be imported, and `decompress_inf.py` and `widescreen.py` still run on their own with the same options.
+
+## Installation
+
+```bash
+git clone https://github.com/balcsida/warfront-tools.git
+cd warfront-tools
+
+# No dependencies beyond Python 3.6+
+python3 warfront.py --help
+```
+
+## INF Tools
+
+WarFront stores game configuration, UI layouts, unit definitions (`.base`) and player profiles in a compressed binary INF format. `warfront.py inf` (`decompress_inf.py`):
 
 - **Converts** binary INF files to the game's editable text format
 - **Compiles** text INF files back to binary (a replacement for Digital Reality's internal `bc.exe`)
 - **Decompresses** INF files without converting them
 - **Analyzes** INF file structure
 
-It also provides `widescreen.py`, which builds a [widescreen interface patch](#widescreen-patch) on top of it.
-
-Converting binary → text → binary reproduces every binary INF shipped with the retail game and the demos **byte for byte**, compressed stream included.
+Converting binary → text → binary reproduces every binary INF shipped with the retail game and the demos **byte for byte**, compressed stream included (with a standard zlib, see [Known Limitations](#known-limitations)).
 
 The game reads both formats, so edited files can be used either as text (with `binaryinffiles = 0`) or compiled back to binary.
-
-## Installation
-
-```bash
-git clone https://github.com/balcsida/warfront-inf-tools.git
-cd warfront-inf-tools
-
-# No dependencies beyond Python 3.6+
-python3 decompress_inf.py --help
-```
-
-## Usage
 
 ### Binary to Text
 
 ```bash
 # Default: Inf/ -> Inf_text/
-python3 decompress_inf.py -t
+python3 warfront.py inf -t
 
 # Custom input/output directories
-python3 decompress_inf.py -t -d "Game/Inf" "Output/Inf"
+python3 warfront.py inf -t -d "Game/Inf" "Output/Inf"
 
 # Single file
-python3 decompress_inf.py -t -f game.inf game_text.inf
+python3 warfront.py inf -t -f game.inf game_text.inf
 
 # Convert in place (overwrites the original files)
-python3 decompress_inf.py -t -i "Game/Inf"
+python3 warfront.py inf -t -i "Game/Inf"
 ```
 
 ### Text to Binary
 
 ```bash
 # Single file
-python3 decompress_inf.py -b -f game_text.inf game.inf
+python3 warfront.py inf -b -f game_text.inf game.inf
 
 # Whole directory
-python3 decompress_inf.py -b -d Inf_text Inf_binary
+python3 warfront.py inf -b -d Inf_text Inf_binary
 ```
 
 `-b` compiles every text file it finds, including files the game ships as text (such as `mplayer.inf`); binary files are copied unchanged. Output is version 3 unless `--format-version 2` is given.
@@ -60,16 +69,18 @@ python3 decompress_inf.py -b -d Inf_text Inf_binary
 ### Decompress Only
 
 ```bash
-python3 decompress_inf.py -d Inf Inf_decompressed
+python3 warfront.py inf -d Inf Inf_decompressed
 ```
 
 ### Analyze File Structure
 
 ```bash
-python3 decompress_inf.py -a file.inf
+python3 warfront.py inf -a file.inf
 ```
 
-## Command Line Options
+`python3 decompress_inf.py ...` accepts exactly the same options.
+
+### Command Line Options
 
 | Option | Description |
 |--------|-------------|
@@ -86,7 +97,7 @@ python3 decompress_inf.py -a file.inf
 
 Files are processed if they end in `.inf` or `.base`. Each file's format (compressed, decompressed binary or text) is detected from its content, not its name.
 
-## Enabling Text INF in Game
+### Enabling Text INF in Game
 
 1. Make sure `Settings.setting` in the game folder has `binaryinffiles = 0` (the Hungarian retail release already ships with it, and still loads its binary files)
 2. Back up the game's `Inf` folder
@@ -96,7 +107,7 @@ Alternatively, compile your edited text files with `-b` and put the binaries bac
 
 The retail game has been played with every INF and BASE file in `Inf` (1,093 files) replaced by `-t` output: the menus work and missions start and play. The game rewrites `Inf/bases/baseinfos.inf`, which ships as text, at startup.
 
-### About `_RefID`
+#### About `_RefID`
 
 `_RefID` is an ordinary property. Digital Reality's text sources give many objects a `_RefID`, but their compiler stripped most of them: of the 1,094 retail binaries, only 55 still contain any. The tool writes exactly what the binary contains, and the game runs fine without the missing IDs. The in-game test above includes `game.inf`, which has none, and the SP demo also ships 59 text files without any.
 
@@ -104,7 +115,7 @@ The retail game doesn't need `--add-refids`. It numbers top-level `Name : cClass
 
 ## Widescreen Patch
 
-The game renders at any resolution, but draws its 2D interface in a virtual 1024x768 space stretched to the screen. `widescreen.py` generates a patch that keeps the interface in proportion:
+The game renders at any resolution, but draws its 2D interface in a virtual 1024x768 space stretched to the screen. `warfront.py widescreen` (`widescreen.py`) generates a patch that keeps the interface in proportion:
 
 - menus and dialogs are centred at 4:3
 - the in-game HUD is anchored to the screen edges: minimap in the bottom-left corner, unit info in the bottom-right corner, command panel and top bar centred
@@ -114,10 +125,10 @@ The bottom HUD is a single image per faction, which the patch cuts into three pi
 
 ```bash
 # Reads the resolution from Local Settings.setting, or pass -r 2560x1080
-python3 widescreen.py "C:/Games/War Front" -o widescreen_patch
+python3 warfront.py widescreen "C:/Games/War Front" -o widescreen_patch
 
 # If the game's Inf folder is already patched, point at the originals
-python3 widescreen.py "C:/Games/War Front" --inf "C:/Games/War Front/Inf_backup" -o widescreen_patch
+python3 warfront.py widescreen "C:/Games/War Front" --inf "C:/Games/War Front/Inf_backup" -o widescreen_patch
 ```
 
 To install, back up `Inf`, copy the output folder's contents over the game folder, and set the virtual width the tool prints in `Local Settings.setting`:
@@ -137,6 +148,30 @@ How the layout is rewritten (Prism UI rules found in the `Inf/2Prism` screens):
 - Tooltips with `PosAbsolute = 1` have a screen-space `PosOffset`
 
 The patch shifts only screen-space coordinates, so everything nested moves with its parent. Loading screens and the medal screens are painted artwork and stay 4:3.
+
+## Editor Unlock and Debug Mode
+
+`WarFront.exe` still contains Digital Reality's full level editor (window title *CoE*): level, terrain and trigger editing, the GUI editor, property windows for every game table, a render-debug panel and a **Debug Mode** switch. Start-up hard-codes the application mode to `"game"`, so the editor is never registered; pointing that one instruction at the existing `"editor"` string unlocks it.
+
+```bash
+# Retail or SP demo (Windows): patch in memory and start the editor
+python3 warfront.py launch "C:/Games/War Front/WarFront.exe" --editor
+
+# Normal game with Debug Mode on (relaxed tech/production checks for you in single-player)
+python3 warfront.py launch "C:/Games/War Front/WarFront.exe" --debug-mode
+
+# SP demo 1.01: write WarFront_editor.exe next to the original instead
+python3 warfront.py patch-demo "C:/Games/War Front Demo/Run/WarFront.exe"
+```
+
+The retail exe is encrypted on disk, so `launch` waits until it has decrypted itself and patches it in memory before start-up reaches the patch site. It recognises the build by the original bytes (Hungarian retail and SP demo 1.01 are supported) and refuses unknown ones.
+
+Good to know:
+
+- The gameplay debug hotkeys (`D_GODMODE`, `D_EXTRAMONEY`, `D_FOWONOFF`, …) are compiled out of both builds and can't be enabled.
+- The editor saves its state into the game folder and rewrites some `Inf` files (see the write-up). Back up `Inf` first.
+
+Addresses, menus, the Debug Features panel and what Debug Mode changes are in [docs/editor-unlock.md](docs/editor-unlock.md).
 
 ---
 
@@ -247,7 +282,7 @@ StringID = ""
 
 ## Reverse Engineering Notes
 
-Earlier versions of this tool used three separate parsers, and needed a special "hybrid u16/u32" parser for `terraintypetable.inf`. Comparing more files showed these were all the same structure. The key observations were:
+Earlier versions of the INF tool used three separate parsers, and needed a special "hybrid u16/u32" parser for `terraintypetable.inf`. Comparing more files showed these were all the same structure. The key observations were:
 
 1. **The header fields at 0x04 and 0x08 are counts, not padding.** Normal files have `0, 1` (no root properties, one root node), `defaultmusics.inf` has `0, 23`, and `terraintypetable.inf` has `1, 1`. The bytes that looked like u16 fields in `terraintypetable.inf` (`01 00 01 00 00 00`) are a property record: value count 1, type 0, string index 1 (`""`).
 2. **Sections and objects are one record type.** An empty container (`"Items *", 0, n`) and an object (`": cThing", props, children`) differ only in the name string. There is no separate "container marker".
@@ -335,7 +370,7 @@ The "Turning Point Sales Preview" (pre-beta, 2006-05-18, E3-era) is a developer 
 
 Preview: 24 multiplayer maps, 3 `Whoiswho` maps (`2vs2-autumn/-mediterran/-winter`), 11 Allied + 11 German campaign missions, 1 tutorial. Retail: 26 multiplayer maps (adds `3vs3map3 - Clash of Eagles` and `5vs5map3 - Battle Royale`), the whoiswho maps renamed to `Whoiswho - autumn/...`, the same 22 campaign missions, and a second tutorial (`tutorial_levelnew`). No common level is byte-identical. Notable preview extras: `E3 aim show.level` inside `2vs2map6 - Shortcuts`, and `mission6a`/`mission9_1` variants in the Allied campaign. The preview ships `.trg` trigger sources for every multiplayer map; retail ships them only for campaigns and adds `.desc` description files.
 
-`.level` files are compressed INF files in both builds, but their properties use value type 3 (embedded blobs), which this tool does not parse (see Known Limitations).
+`.level` files are compressed INF files in both builds, but their properties use value type 3 (embedded blobs), which the INF tool does not parse (see Known Limitations).
 
 ### Preview-only folders
 
@@ -367,7 +402,11 @@ Run the byte-exact check against your own install with:
 WARFRONT_DIR="/path/to/War Front" python3 -m unittest discover -s tests
 ```
 
+Optional: `WARFRONT_INF_DIR` points the widescreen build test at the original `Inf` files if the game's own `Inf` folder is already patched, and `WARFRONT_DEMO_EXE` checks the editor patch against the SP demo 1.01 `WarFront.exe`.
+
 ### Known Limitations
+
+- Byte-exact recompression needs a standard zlib build. Python builds that use zlib-ng instead, such as the official Windows builds of Python 3.14, compress differently: every retail file still round-trips to the same header and the same decompressed data, and the game loads it, but the compressed bytes differ and the byte-exact tests fail. Run those tests under WSL or Linux.
 
 - Only object-like `#define NAME value` macros are expanded; other preprocessor directives (`#include`, `#ifdef`, ...) are rejected with an error. No shipped file uses them.
 - `.level` map files are compressed INF files whose properties contain value type 3 (embedded blobs, e.g. compiled scripts); the parser does not support them. This applies to the retail release as well.
@@ -399,7 +438,7 @@ This confirms that:
 2. Binary conversion was done as a build/release step
 3. A reverse tool (binary-to-text) may have also existed
 
-`decompress_inf.py -b` does the same job as `bc ... B`: its output for shipped files is identical to what `bc.exe` produced.
+`warfront.py inf -b` does the same job as `bc ... B`: its output for shipped files is identical to what `bc.exe` produced.
 
 ---
 
@@ -411,6 +450,8 @@ Contributions welcome! Areas of interest:
 - [x] `#define` macro expansion for developer text files
 - [ ] `#include` preprocessing for developer text files
 - [ ] Compatibility with other Digital Reality games
+- [ ] Editor patch addresses for more builds (MP demo, sales preview, other languages)
+- [ ] Play-test and document exactly what Debug Mode unlocks
 
 ## License
 

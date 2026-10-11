@@ -504,9 +504,9 @@ def build_patch(game_dir, output_dir, width, text=False, inf_dir=None):
     return written, len(images)
 
 
-def main():
+def main(argv=None, prog=None):
     parser = argparse.ArgumentParser(
-        description='Generate a widescreen interface patch for WarFront: Turning Point')
+        prog=prog, description='Generate a widescreen interface patch for WarFront: Turning Point')
     parser.add_argument('game_dir', help='game folder with the original Inf and Gfx folders')
     parser.add_argument('-r', '--resolution', metavar='WIDTHxHEIGHT',
                         help='screen resolution (default: activesizex/y from Local Settings.setting)')
@@ -514,7 +514,7 @@ def main():
     parser.add_argument('--inf', metavar='DIR',
                         help='folder with the original INF files (default: the game\'s Inf folder)')
     parser.add_argument('--text', action='store_true', help='write text INF files instead of binary')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.resolution:
         match = re.fullmatch(r'(\d+)[xX:](\d+)', args.resolution)

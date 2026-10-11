@@ -243,6 +243,11 @@ Other game files may use similar formats:
 - Save game files
 - Mission configuration
 
+### Editor Unlock
+
+The same Ghidra + MCP workflow found the hidden level editor and the compiled-out debug
+hotkeys in `WarFront.exe`; see [docs/editor-unlock.md](docs/editor-unlock.md).
+
 ## References
 
 - [Ghidra Project](https://ghidra-sre.org/)

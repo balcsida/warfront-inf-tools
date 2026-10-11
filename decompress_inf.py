@@ -655,19 +655,20 @@ def analyze_file(path):
         print(f'  [{node.name}]')
 
 
-def main():
+def main(argv=None, prog=None):
     parser = argparse.ArgumentParser(
+        prog=prog,
         description='Convert WarFront: Turning Point INF files between binary and text',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 Examples:
-  python decompress_inf.py -t                         # Inf/ -> Inf_text/ (binary to text)
-  python decompress_inf.py -t -d Data/Inf Out/Inf     # Custom folders
-  python decompress_inf.py -t -f game.inf game.txt    # Single file to text
-  python decompress_inf.py -b -f game.txt game.inf    # Compile text back to binary
-  python decompress_inf.py -b -d Inf_text Inf_binary  # Compile a whole folder
-  python decompress_inf.py -d Inf Inf_decompressed    # Decompress only
-  python decompress_inf.py -a file.inf                # Show file structure
+  %(prog)s -t                         # Inf/ -> Inf_text/ (binary to text)
+  %(prog)s -t -d Data/Inf Out/Inf     # Custom folders
+  %(prog)s -t -f game.inf game.txt    # Single file to text
+  %(prog)s -b -f game.txt game.inf    # Compile text back to binary
+  %(prog)s -b -d Inf_text Inf_binary  # Compile a whole folder
+  %(prog)s -d Inf Inf_decompressed    # Decompress only
+  %(prog)s -a file.inf                # Show file structure
 ''')
     parser.add_argument('-d', '--dir', nargs=2, metavar=('INPUT', 'OUTPUT'),
                         help='process directory INPUT into OUTPUT')
@@ -687,7 +688,7 @@ Examples:
     parser.add_argument('--add-refids', action='store_true',
                         help='with -t, add sequential _RefIDs to files that have none')
     parser.add_argument('-v', '--verbose', action='store_true', help='show detailed output')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     mode = 'text' if args.to_text else 'binary' if args.to_binary else 'decompress'
 
