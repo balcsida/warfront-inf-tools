@@ -380,6 +380,14 @@ class TextFormatError(ValueError):
 
 _NUMBER_RE = re.compile(r'[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$')
 
+_DEFINE_RE = re.compile(r'#define\s+(\w+)(?:\s+(.*))?$')
+
+
+def _define_pattern(defines):
+    """Regex matching a quoted string (group 0, left alone) or a defined name (group 1)."""
+    names = '|'.join(sorted(map(re.escape, defines), key=len, reverse=True))
+    return re.compile(r'L?"[^"]*"|\b(' + names + r')\b')
+
 
 def _parse_values(text, lineno):
     values = []
@@ -418,15 +426,32 @@ def _parse_values(text, lineno):
 
 
 def parse_text(text):
-    """Parse a text INF (as written by the game's developers or to_text) into a Node tree."""
+    """Parse a text INF (as written by the game's developers or to_text) into a Node tree.
+
+    Handles the simple object-like `#define NAME value` macros used by a few
+    developer-written files (e.g. the sales preview's GlobalIncludes.inf and
+    StateIcons.inf): after a `#define` line, NAME is replaced by its value
+    wherever it appears as a whole word outside quoted strings.
+    """
     root = Node()
     stack = [root]
     pending = None  # section header waiting for its "{"
+    defines = {}
+    pattern = None
 
     for lineno, raw_line in enumerate(text.splitlines(), 1):
         line = raw_line.strip()
         if not line or line.startswith(';'):
             continue
+        if line.startswith('#'):
+            m = _DEFINE_RE.match(line)
+            if not m:
+                raise TextFormatError(f'line {lineno}: unsupported preprocessor directive: {line!r}')
+            defines[m.group(1)] = (m.group(2) or '').strip()
+            pattern = _define_pattern(defines)
+            continue
+        if pattern is not None:
+            line = pattern.sub(lambda m: defines[m.group(1)] if m.group(1) is not None else m.group(0), line)
         if pending is not None:
             if line != '{':
                 raise TextFormatError(f'line {lineno}: expected "{{" after [{pending.name}]')
@@ -441,8 +466,6 @@ def parse_text(text):
             if len(stack) == 1:
                 raise TextFormatError(f'line {lineno}: unmatched "}}"')
             stack.pop()
-        elif line.startswith('#'):
-            raise TextFormatError(f'line {lineno}: preprocessor directives are not supported: {line!r}')
         elif '=' in line:
             name, _, value_text = line.partition('=')
             name = name.strip()

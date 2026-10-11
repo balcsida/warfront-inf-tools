@@ -241,6 +241,7 @@ StringID = ""
 - `Name = v1, v2, ...` is a property. Names may repeat.
 - Strings are quoted and use no escape sequences (`"...\Grass\"` ends at the second `"`). Unquoted values are numbers if they look like one, otherwise strings (`Unit = axh_Hartman`).
 - Lines starting with `;` are comments. CRLF line endings.
+- `#define NAME value` lines are simple macros: from the definition on, `NAME` is replaced by `value` wherever it appears as a whole word outside quoted strings. Only two shipped files use them (`GlobalIncludes.inf` and `StateIcons.inf` in the sales preview).
 
 ---
 
@@ -321,7 +322,7 @@ WARFRONT_DIR="/path/to/War Front" python3 -m unittest discover -s tests
 
 ### Known Limitations
 
-- `#define` preprocessor lines (used only by `GlobalIncludes.inf` and `StateIcons.inf` in the sales preview) are rejected with an error rather than expanded.
+- Only object-like `#define NAME value` macros are expanded; other preprocessor directives (`#include`, `#ifdef`, ...) are rejected with an error. No shipped file uses them.
 - Strings containing `"` or line breaks can't be written as text (none exist in any shipped file).
 - Magic versions 0 and 1 are not supported; no files using them are known.
 - `IntroDesc.inf` is a bare movie path, not an INF, and is skipped.
@@ -359,7 +360,8 @@ This confirms that:
 Contributions welcome! Areas of interest:
 
 - [ ] GUI editor for INF files
-- [ ] `#define` / include preprocessing for developer text files
+- [x] `#define` macro expansion for developer text files
+- [ ] `#include` preprocessing for developer text files
 - [ ] Compatibility with other Digital Reality games
 
 ## License

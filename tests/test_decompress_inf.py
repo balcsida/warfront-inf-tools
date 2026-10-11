@@ -204,10 +204,83 @@ class ParseTextTests(unittest.TestCase):
         self.assertIsInstance(root.children[0].props[3][1][2], WString)
 
     def test_errors(self):
-        for text in ["#define X 1\r\n", "[A]\r\n{\r\n", "}\r\n", "[A]\r\nx = 1\r\n", 'x = "open\r\n']:
+        for text in ["[A]\r\n{\r\n", "}\r\n", "[A]\r\nx = 1\r\n", 'x = "open\r\n',
+                     "#include \"x.inf\"\r\n", "#define\r\n", "# 1\r\n"]:
             with self.subTest(text=text):
                 with self.assertRaises(TextFormatError):
                     parse_text(text)
+
+
+class DefineTests(unittest.TestCase):
+    def test_define_substitutes_values(self):
+        root = parse_text(
+            "#define TRUE 1\r\n"
+            "#define FALSE 0\r\n"
+            "#define REVERSE -1\r\n"
+            "[Test]\r\n"
+            "{\r\n"
+            "\tCanFlash = FALSE\r\n"
+            "\tDir = REVERSE\r\n"
+            "\tPair = TRUE, FALSE\r\n"
+            "}\r\n"
+        )
+        self.assertEqual(root.children[0].props, [
+            ("CanFlash", [0.0]),
+            ("Dir", [-1.0]),
+            ("Pair", [1.0, 0.0]),
+        ])
+
+    def test_define_only_whole_words_outside_strings(self):
+        root = parse_text(
+            "#define HA_LEFT 0\r\n"
+            "[Test]\r\n"
+            "{\r\n"
+            '\tName = "HA_LEFT"\r\n'
+            '\tWide = L"HA_LEFT HA_LEFT"\r\n'
+            "\tAlignment = HA_LEFT\r\n"
+            "\tOther = HA_LEFTISH\r\n"
+            "}\r\n"
+        )
+        self.assertEqual(root.children[0].props, [
+            ("Name", ["HA_LEFT"]),
+            ("Wide", [WString("HA_LEFT HA_LEFT")]),
+            ("Alignment", [0.0]),
+            ("Other", ["HA_LEFTISH"]),
+        ])
+
+    def test_define_applies_from_definition_point_on(self):
+        root = parse_text(
+            "[A]\r\n"
+            "{\r\n"
+            "\tV = X\r\n"
+            "}\r\n"
+            "#define X 5\r\n"
+            "[B]\r\n"
+            "{\r\n"
+            "\tV = X\r\n"
+            "}\r\n"
+        )
+        self.assertEqual(root.children[0].props, [("V", ["X"])])
+        self.assertEqual(root.children[1].props, [("V", [5.0])])
+
+    def test_redefine_last_wins(self):
+        root = parse_text("#define X 1\r\n#define X 2\r\n[A]\r\n{\r\nV = X\r\n}\r\n")
+        self.assertEqual(root.children[0].props, [("V", [2.0])])
+
+    def test_file_with_only_defines_is_an_empty_tree(self):
+        # GlobalIncludes.inf in the sales preview is all comments and defines
+        root = parse_text("; comment\r\n#define SIMPLE 0\r\n\r\n#define LOOPED 1\r\n")
+        self.assertEqual(root, Node())
+
+    def test_define_in_section_header(self):
+        root = parse_text("#define SEC MySection\r\n[SEC]\r\n{\r\n}\r\n")
+        self.assertEqual(root.children[0].name, "MySection")
+
+    def test_round_trip_through_binary(self):
+        text = ("#define FALSE 0\r\n[Test]\r\n{\r\n\tCanFlash = FALSE\r\n}\r\n")
+        root = parse_text(text)
+        self.assertEqual(binary_to_text(text_to_binary(text)), "[Test]\r\n{\r\n\tCanFlash = 0\r\n}\r\n")
+        self.assertEqual(root.children[0].props, [("CanFlash", [0.0])])
 
 
 class AddRefIdsTests(unittest.TestCase):
