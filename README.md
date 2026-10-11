@@ -303,6 +303,53 @@ WarFront uses the **Prism Engine** developed by Digital Reality. The INF files c
 
 ---
 
+## The Sales Preview Build (May 2006)
+
+The "Turning Point Sales Preview" (pre-beta, 2006-05-18, E3-era) is a developer build: its `Run/Inf` folder holds 1,127 `.inf`/`.base` files, **all in text form** (every one compiles with `-b`), and it ships folders the retail release doesn't have. Compared against the Hungarian retail release (`Inf_backup`, 1,099 files, almost all compressed binary):
+
+### INF/BASE files
+
+- 1,018 files exist in both. **Only two have identical content** (`2Prism/SkinInfo.inf` and `TerrainTypeTable.inf`); every other common file differs. Of the common files, 1,012 are text in the preview vs binary in retail, `baseinfos.inf`, `mplayer.inf` and `damagemultable.dat` are text in both, and `Physics/physics.phy` is binary in both.
+- 121 files are preview-only, 81 retail-only (counts include the preview's zero-byte `!` marker files).
+
+### Units (`Inf/bases`)
+
+1,032 bases in the preview vs 1,016 in retail; the 966 shared ones all differ (typically a few lines: default properties such as `Color = 255, 255, 255, 255` that later versions write explicitly, plus renames and rebalancing — e.g. `al_m4_sherman.base` has `RequiredForSurvival` where retail has `RequiredForSurvivalSingleplayer`/`Multiplayer`, `ChaseRange = 50` where retail has `-1`, and an extra `cLampComponentBase`).
+
+- Preview-only (68): units cut or renamed before release (`ge_brummbar`, `ge_flamethrower`, `ge_panzeriii`, `ge_tigerii`, `al_excelsior`, `al_jumbo`, `al_mk_iv_churchill`, `al_vickers_mk_vi`, `so_bt_5`, `so_kv2`, `so_su_152`, `so_t44`, `so_inv_communist_fever`, `mit_tigerii`), collision-test bases (`coll_test_*`), test props (`test*`, `st1`-`st3`), and extra grass/scenery variants.
+- Retail-only (52): the `*_bunker_*` set, the `ambient_*` bases (a single `AmbientLocal.base` in the preview), `dam`, `campaign_*`, `conquer_flag`, attackable resource props, and others added later.
+
+### UI screens (`Inf/2Prism`)
+
+52 files in the preview vs 49 in retail. 41 exist in both, and all but `SkinInfo.inf` differ — some heavily (`centralpanel.inf`, the HUD, differs in ~9,400 lines; `gamescreen.inf` in ~12,000).
+
+- Preview-only (12): the **E3 2006 demo screens** `e3mainmenu`, `e3effectdemo`, `e3rollingdemo`, `e3screenshots`, `e3backtomaindialog`, plus `singleplayerscreen`, `testscreen`, `exitgamedialog`, `replaydialog`, `replaystartdialog`, `medalvideoscreen`, `gamespygamesetup`.
+- Retail-only (9): `cdkeyscreen`, `countdownscreen`, `cutscenescreen`, `exitdialog`, `exitscreen`, `gamespycreateaccount`, `versionscreen`, `workinganimdialog`, `workingdialog`.
+
+### Root INF files
+
+- Preview-only: `GlobalIncludes.inf` and `StateIcons.inf` (the two `#define` files), `NationalityTable.inf`, `SpeechOrder.inf`, `TileGroupModifier.inf`, `levels.inf` (weapon rank names), `managementorder.inf`, `maxvalues.inf`, `messages.inf`.
+- Retail-only: `logsystem2.inf`, `tdxoptions.inf`, and a `game/` subfolder (`aicontent.inf`, `gamesettings.inf`, `nations.inf`, `schemacontent.inf`) — configuration that was reorganised for release.
+
+### Levels
+
+Preview: 24 multiplayer maps, 3 `Whoiswho` maps (`2vs2-autumn/-mediterran/-winter`), 11 Allied + 11 German campaign missions, 1 tutorial. Retail: 26 multiplayer maps (adds `3vs3map3 - Clash of Eagles` and `5vs5map3 - Battle Royale`), the whoiswho maps renamed to `Whoiswho - autumn/...`, the same 22 campaign missions, and a second tutorial (`tutorial_levelnew`). No common level is byte-identical. Notable preview extras: `E3 aim show.level` inside `2vs2map6 - Shortcuts`, and `mission6a`/`mission9_1` variants in the Allied campaign. The preview ships `.trg` trigger sources for every multiplayer map; retail ships them only for campaigns and adds `.desc` description files.
+
+`.level` files are compressed INF files in both builds, but their properties use value type 3 (embedded blobs), which this tool does not parse (see Known Limitations).
+
+### Preview-only folders
+
+- `InfDX/` (847 files): the renderer's material/shader sources — 71 `.mat` material folders with `.tech`/`.pass` files, 225 `.hlsl` shaders, 17 `.layerset`, 30 `.surface`, and text `tdxdefs.inf`/`tdxoptions.inf` (the SP demo ships `tdxdefs.inf` as a decompressed binary). Comments are partly in Hungarian.
+- `Editor/REffectEditor/` (19 files): models and textures for the effect editor.
+
+### Root configuration files
+
+- `Settings.setting` has an `e3demo` section (attract-mode timeouts and paths to `levels/E3B/...` demo levels, which are not in the build; `demomodeactiv = 0`). Retail instead has `gameengine\dontstorerefidsinbases = 1` — the switch behind the stripped `_RefID`s.
+- `hotkeys.txt` was reworked between the builds (`GUARD = G` vs `GUARD_POS = G`, etc.); `keys.txt` and `useroptions.inf` are preview-only.
+- The preview's `Run` folder also carries debug runtimes (`d3d9d.dll`, `d3dx9d_*.dll`, `MFC*D.DLL`, `MSVCRTD.DLL`) and developer utilities (`FlexGridSetup.exe`, `regcleaner.EXE`, `Amhooker.dll`).
+
+---
+
 ## File Compatibility
 
 Tested against the retail (Hungarian) release, MP demo, SP demo and sales preview:
@@ -323,6 +370,7 @@ WARFRONT_DIR="/path/to/War Front" python3 -m unittest discover -s tests
 ### Known Limitations
 
 - Only object-like `#define NAME value` macros are expanded; other preprocessor directives (`#include`, `#ifdef`, ...) are rejected with an error. No shipped file uses them.
+- `.level` map files are compressed INF files whose properties contain value type 3 (embedded blobs, e.g. compiled scripts); the parser does not support them. This applies to the retail release as well.
 - Strings containing `"` or line breaks can't be written as text (none exist in any shipped file).
 - Magic versions 0 and 1 are not supported; no files using them are known.
 - `IntroDesc.inf` is a bare movie path, not an INF, and is skipped.
