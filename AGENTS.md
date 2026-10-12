@@ -214,25 +214,39 @@ Some format features only appear in certain files. Testing against multiple samp
 
 The ability to query decompiled code while simultaneously writing parsers dramatically accelerates reverse engineering.
 
-## Future Work
+## Later Findings
 
-### Text-to-Binary Converter
+### Text-to-Binary Converter (done)
 
-To recompile edited text files back to binary, the process would be:
+`decompress_inf.py -b` compiles text back to binary. Building it forced every
+format assumption to be checked by re-encoding: the output must equal the
+original file byte for byte. That check exposed three mistakes in the earlier
+analysis, all fixed now:
 
-1. Parse text format into object tree
-2. Build string table (collect all unique strings)
-3. Build wide string table
-4. Serialize objects to binary
-5. Apply zlib compression
-6. Prepend header with magic, sizes
+- The 12-byte compressed header is `magic, 1, uncompressed_size`, not
+  `magic, compressed_size, uncompressed_size`.
+- The "reserved" words at 0x04/0x08 of the decompressed data are the root
+  property and child counts. "Root object", "simple format" and the
+  `terraintypetable.inf` "u16 hybrid" are all the same structure.
+- Containers and inline sections are the same node record; only the name
+  string differs. Version 2 files (`me262.inf`) use 16-bit string indices.
+
+### Lesson: Verify by Round-Tripping
+
+A parser that produces plausible output can still be wrong. Re-encoding the
+parsed tree and comparing bytes with the original shows every misunderstanding
+immediately.
 
 ### Additional Formats
 
 Other game files may use similar formats:
 - Save game files
 - Mission configuration
-- Unit definitions
+
+### Editor Unlock
+
+The same Ghidra + MCP workflow found the hidden level editor and the compiled-out debug
+hotkeys in `WarFront.exe`; see [docs/editor-unlock.md](docs/editor-unlock.md).
 
 ## References
 
@@ -242,99 +256,5 @@ Other game files may use similar formats:
 
 ## Appendix: Complete Format Specification
 
-### Compressed File Header (12 bytes)
-
-| Offset | Size | Type | Description |
-|--------|------|------|-------------|
-| 0x00 | 4 | uint32_le | Magic (0xFFFFA5AA/AB/AC/AD) |
-| 0x04 | 4 | uint32_le | Compressed data size |
-| 0x08 | 4 | uint32_le | Uncompressed data size |
-| 0x0C | ... | bytes | zlib compressed data |
-
-### Decompressed Data Header (16 bytes)
-
-| Offset | Size | Type | Description |
-|--------|------|------|-------------|
-| 0x00 | 4 | uint32_le | String table offset |
-| 0x04 | 12 | bytes | Reserved (zeros) |
-
-### Root Object (starts at 0x10)
-
-| Field | Size | Type | Description |
-|-------|------|------|-------------|
-| prop_count | 4 | uint32_le | Number of properties |
-| child_count | 4 | uint32_le | Number of child sections |
-| properties | var | Property[] | Property data |
-| sections | var | Section[] | Section data |
-
-Class name is always `strings[0]`.
-
-### Child Object
-
-| Field | Size | Type | Description |
-|-------|------|------|-------------|
-| class_idx | 4 | uint32_le | String table index for class name |
-| prop_count | 4 | uint32_le | Number of properties |
-| child_count | 4 | uint32_le | Number of child sections |
-| properties | var | Property[] | Property data |
-| sections | var | Section[] | Section data |
-
-### Property
-
-| Field | Size | Type | Description |
-|-------|------|------|-------------|
-| name_idx | 4 | uint32_le | String table index for property name |
-| count | 1 | uint8 | Number of values |
-| values | var | Value[] | Value entries (count items) |
-
-### Value
-
-| Field | Size | Type | Description |
-|-------|------|------|-------------|
-| type | 1 | uint8 | Value type (0-3) |
-| data | var | varies | Type-dependent data |
-
-**Type 0 (String):** 4 bytes uint32_le string table index
-**Type 1 (Double):** 8 bytes IEEE 754 float64
-**Type 2 (WString):** 4 bytes uint32_le wide string table index
-**Type 3 (Blob):** 4 bytes length + n bytes raw data
-
-### Container Section (type = 0)
-
-| Field | Size | Type | Description |
-|-------|------|------|-------------|
-| name_idx | 4 | uint32_le | String table index for section name |
-| type | 4 | uint32_le | Always 0 |
-| obj_count | 4 | uint32_le | Number of child objects |
-| objects | var | Object[] | Child objects with class_idx |
-
-### Inline Object Section (type != 0)
-
-| Field | Size | Type | Description |
-|-------|------|------|-------------|
-| name_idx | 4 | uint32_le | String index ("Name : ClassName") |
-| prop_count | 4 | uint32_le | Number of properties (non-zero) |
-| child_count | 4 | uint32_le | Number of child sections |
-| properties | var | Property[] | Property data |
-| sections | var | Section[] | Child sections |
-
-### String Table
-
-| Field | Size | Type | Description |
-|-------|------|------|-------------|
-| count | 4 | uint32_le | Number of strings |
-| strings | var | cstring[] | Null-terminated UTF-8 strings |
-
-### Wide String Table
-
-| Field | Size | Type | Description |
-|-------|------|------|-------------|
-| count | 4 | uint32_le | Number of wide strings |
-| entries | var | WString[] | Wide string entries |
-
-**Wide String Entry:**
-
-| Field | Size | Type | Description |
-|-------|------|------|-------------|
-| char_count | 4 | uint32_le | Number of UTF-16 code units |
-| data | char_count×2 | bytes | UTF-16LE encoded string |
+See the "Binary INF Format" section of [README.md](README.md), which is kept
+in sync with the implementation in `decompress_inf.py`.
